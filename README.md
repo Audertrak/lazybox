@@ -24,6 +24,7 @@ After selecting a target, the user can specify a mode to determine how the outpu
 - tabelify: Print a tabular representation (ala nushell)
 - prettify: Print a "pretty" cli representation (ala charmbracelet)
 - commentify: Print output to a comment block given a language (e.g. bash, python, etc.)
+- httpify: Print output as an HTTP response, with appropriate headers and formatting
 
 ### flags
 
