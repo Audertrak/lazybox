@@ -1,0 +1,147 @@
+.TH LAZYBOX 1 "May 2025" "lazybox 1.0" "User Commands"
+.SH NAME
+lazybox \- swiss army knife for extracting, transforming, and formatting data for LLM prompting and more
+.SH SYNOPSIS
+.B lazybox
+.I target
+.RI [ mode ]
+.RI [ options ]
+.RI [ arguments ...]
+.SH DESCRIPTION
+.B lazybox
+is a command-line tool for quickly surfacing and preparing data for use in prompting large language models (LLMs), but it may be useful for other data extraction and transformation purposes as well.
+
+.B lazybox
+operates on a variety of "targets" (data sources), and can output data in multiple "modes" (formats), with optional flags to further modify the output.
+
+.SH TARGETS
+The first positional argument specifies the target, which determines what data is being processed. Supported targets are:
+
+.TP
+.B fs
+Emit a representation of the filesystem given a path.
+
+.TP
+.B file
+Open and read the contents of a file.
+
+.TP
+.B api
+Parse source code and extract an API.
+
+.TP
+.B pkg
+Crawl a directory and emit a representation of its file/folder structure with relevant metadata and the contents of text files included.
+
+.TP
+.B db
+Fetch data from a database via a middleware.
+
+.SH MODES
+After selecting a target, the user can specify a mode to determine how the output is formatted. Supported modes are:
+
+.TP
+.B jsonify
+Print a JSON representation.
+
+.TP
+.B commify
+Print a comma-separated values (CSV) representation.
+
+.TP
+.B mdify
+Print a Markdown representation.
+
+.TP
+.B tabelify
+Print a tabular representation (similar to nushell).
+
+.TP
+.B prettify
+Print a "pretty" CLI representation (similar to charmbracelet).
+
+.TP
+.B commentify
+Print output as a comment block in a specified language (e.g., bash, python, etc.).
+
+.SH OPTIONS
+Optional flags can be specified to further modify the output:
+
+.TP
+.BR -a ", " --all
+Print all representations of the data, including all available metadata and results.
+
+.TP
+.BR -i ", " --incremental
+Print the output incrementally as it is processed, rather than waiting for the entire process to complete. Useful for printing multiple representations without needing to print all.
+
+.TP
+.BR -I ", " --ir
+Print the intermediate representation of the data, which is a raw, unprocessed version of the data that lazybox holds in memory. Useful for debugging or further processing.
+
+.TP
+.BR -l ", " --less
+Compact, minimal output, with selective exclusions of metadata or results.
+
+.TP
+.BR -m ", " --min
+Remove all whitespace and convert to a single string value.
+
+.TP
+.BR -s ", " --silent
+Create an intermediate representation of the data, but do not print it to stdout. Useful for piping the output to another command or for debugging.
+
+.TP
+.BR -t ", " --tokenize
+Remove articles or other prose grammar and use simple key:value pairs to simplify and shorten output while attempting to preserve meaning.
+
+.TP
+.BR -v ", " --verbose
+Verbose output. Includes additional metadata and results that may not be included in the default output, such as file sizes, line counts, or other relevant information.
+
+.SH INTERMEDIATE REPRESENTATION AND PIPES
+When you run a
+.B lazybox
+command, it generates an intermediate representation (IR) of the data based on the target specified. This IR is then parsed and transformed to produce the final output in the desired format. Lazybox holds the IR in memory until the process is complete, which means it is possible to perform multiple operations from the same IR.
+
+If output from
+.B lazybox
+is piped, lazybox detects this and continues to hold the IR from the first command in memory until the full chain is complete. This allows creative chaining of lazybox commands together with other CLI tools or even itself, selectively outputting a raw string or building a queue of outputs/modifiers from the IR from one command to the next without needing to write it to disk or store it in a variable.
+
+.SH EXAMPLES
+.TP
+Scan the current directory and print as JSON:
+.B
+lazybox fs jsonify .
+
+.TP
+Read a file and print as Markdown:
+.B
+lazybox file mdify ./README.md
+
+.TP
+Extract an API from a source file and print as a comment block in Python:
+.B
+lazybox api commentify --language python ./main.c
+
+.TP
+Crawl a package directory and print all available representations:
+.B
+lazybox pkg --all ./myproject
+
+.TP
+Pipe the output of one lazybox command into another:
+.B
+lazybox fs jsonify . | lazybox file mdify
+
+.SH SEE ALSO
+.BR jq (1),
+.BR tree (1),
+.BR ls (1),
+.BR grep (1)
+
+.SH AUTHOR
+lazybox was designed and implemented by Tim and contributors.
+
+.SH BUGS
+Report bugs or feature requests at https://github.com/yourusername/lazybox
