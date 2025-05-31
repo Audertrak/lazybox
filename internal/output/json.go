@@ -3,10 +3,10 @@ package output
 import (
 	"encoding/json"
 	"fmt"
-	"lazybox/internal/ir"
+	"lazybox/internal/glpg"
+	"lazybox/internal/theme"
 	"os"
 	"regexp"
-	"strings"
 
 	"github.com/charmbracelet/lipgloss"
 )
@@ -37,137 +37,149 @@ var (
 		"and so on":            "...",
 		"and so forth":         "...",
 	}
-	jqKeyStyle    = lipgloss.NewStyle().Foreground(themeColor(CurrentTheme.Base0B)).Bold(true)
-	jqStringStyle = lipgloss.NewStyle().Foreground(themeColor(CurrentTheme.Base0A))
-	jqNumStyle    = lipgloss.NewStyle().Foreground(themeColor(CurrentTheme.Base09))
-	jqBoolStyle   = lipgloss.NewStyle().Foreground(themeColor(CurrentTheme.Base0E)).Bold(true)
-	jqNullStyle   = lipgloss.NewStyle().Foreground(themeColor(CurrentTheme.Base03)).Italic(true)
+	jqKeyStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color(theme.GetDefaultTheme().Base0B)).Bold(true)
+	jqStringStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(theme.GetDefaultTheme().Base0A))
+	jqNumStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color(theme.GetDefaultTheme().Base09))
+	jqBoolStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color(theme.GetDefaultTheme().Base0E)).Bold(true)
+	jqNullStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color(theme.GetDefaultTheme().Base03)).Italic(true)
 )
 
-func PrintJSON(info *ir.FileInfo) {
-	data, err := json.MarshalIndent(info, "", "  ")
+// PrintGLPGAsJSON serializes the GLPG to a standard JSON output.
+func PrintGLPGAsJSON(graph *glpg.GLPG, flags map[string]bool) error {
+	// For direct JSON serialization, we can marshal the graph structure.
+	// If a more specific JSON structure is needed, we'd transform the graph here.
+
+	// Handle different JSON modes based on flags
+	if minFlag, _ := flags["min"]; minFlag {
+		return PrintGLPGAsMinJSON(graph)
+	}
+	if lessFlag, _ := flags["less"]; lessFlag {
+		return PrintGLPGAsLessJSON(graph)
+	}
+	// Default to standard indented JSON
+	data, err := json.MarshalIndent(graph, "", "  ")
 	if err != nil {
-		fmt.Println("Error:", err)
-		return
+		fmt.Fprintf(os.Stderr, "Error marshaling GLPG to JSON: %v\\n", err)
+		return err
 	}
 	fmt.Println(string(data))
+	return nil
 }
 
-func PrintMinJSON(info *ir.FileInfo) {
-	data, err := json.Marshal(info)
+// PrintGLPGAsMinJSON serializes the GLPG to a minified JSON output.
+func PrintGLPGAsMinJSON(graph *glpg.GLPG) error {
+	data, err := json.Marshal(graph)
 	if err != nil {
-		fmt.Println("Error:", err)
-		return
+		fmt.Fprintf(os.Stderr, "Error marshaling GLPG to minified JSON: %v\\n", err)
+		return err
 	}
 	fmt.Println(string(data))
+	return nil
 }
 
-func PrintLessJSON(info *ir.FileInfo) {
-	if info == nil {
+// PrintGLPGAsLessJSON provides a summarized JSON view of the GLPG.
+// This might involve showing counts of nodes/edges or specific high-level properties.
+func PrintGLPGAsLessJSON(graph *glpg.GLPG) error {
+	if graph == nil {
 		fmt.Println("{}")
-		return
+		return nil
 	}
-	less := map[string]interface{}{
-		"name": info.Name,
-		"type": info.Type,
-		"path": info.Path,
+	summary := struct {
+		NodeCount int      `json:"node_count"`
+		EdgeCount int      `json:"edge_count"`
+		NodeIDs   []string `json:"node_ids,omitempty"` // Example: show some node IDs
+		// Potentially add more summary fields here, like label counts, etc.
+	}{
+		NodeCount: len(graph.Nodes),
+		EdgeCount: len(graph.Edges),
 	}
-	if info.Type == ir.FileTypeFile {
-		less["extension"] = info.Extension
-		less["size_bytes"] = info.Size
-	}
-	if info.Type == ir.FileTypeDirectory {
-		less["contents_count"] = len(info.Contents)
-	}
-	data, err := json.MarshalIndent(less, "", "  ")
-	if err != nil {
-		fmt.Println("Error:", err)
-		return
-	}
-	fmt.Println(string(data))
-}
 
-func TokenizeText(s string) string {
-	s = strings.ToLower(s)
-	for k, v := range phraseSubs {
-		s = strings.ReplaceAll(s, k, v)
-	}
-	s = fillerWords.ReplaceAllString(s, "")
-	s = regexp.MustCompile(`\s+`).ReplaceAllString(s, " ")
-	s = strings.TrimSpace(s)
-	return s
-}
-
-func PrintTokenized(info *ir.FileInfo) {
-	if info == nil {
-		fmt.Println("")
-		return
-	}
-	fmt.Printf("name:%s type:%s path:%s", info.Name, info.Type, info.Path)
-	if info.Type == ir.FileTypeFile {
-		fmt.Printf(" extension:%s size:%d", info.Extension, info.Size)
-		if info.Content != "" {
-			fmt.Print("\ncontent:")
-			// Only print first 500 chars for brevity
-			short := info.Content
-			if len(short) > 500 {
-				short = short[:500]
-			}
-			fmt.Print(TokenizeText(short))
+	// Optionally, add a few node IDs to the summary
+	maxPreviewIDs := 5
+	for id := range graph.Nodes {
+		if len(summary.NodeIDs) < maxPreviewIDs {
+			summary.NodeIDs = append(summary.NodeIDs, id)
+		} else {
+			break
 		}
 	}
-	if info.Type == ir.FileTypeDirectory {
-		fmt.Printf(" contents:%d", len(info.Contents))
-	}
-	fmt.Println()
-}
 
-func PrintJQ(info *ir.FileInfo) {
-	data, err := json.MarshalIndent(info, "", "  ")
+	data, err := json.MarshalIndent(summary, "", "  ")
 	if err != nil {
-		fmt.Println("Error:", err)
-		return
+		fmt.Fprintf(os.Stderr, "Error marshaling GLPG summary to JSON: %v\\n", err)
+		return err
 	}
-	lines := strings.Split(string(data), "\n")
-	for _, line := range lines {
-		styled := line
-		styled = regexp.MustCompile(`"([^"]+)":`).ReplaceAllStringFunc(styled, func(m string) string {
-			key := m[1 : len(m)-2]
-			return jqKeyStyle.Render("\""+key+"\"") + ":"
-		})
-		styled = regexp.MustCompile(`: "([^"]*)"`).ReplaceAllStringFunc(styled, func(m string) string {
-			val := m[3:]
-			return ": " + jqStringStyle.Render(val)
-		})
-		styled = regexp.MustCompile(`: (\d+)`).ReplaceAllStringFunc(styled, func(m string) string {
-			val := m[2:]
-			return ": " + jqNumStyle.Render(val)
-		})
-		styled = regexp.MustCompile(`: (true|false)`).ReplaceAllStringFunc(styled, func(m string) string {
-			val := m[2:]
-			return ": " + jqBoolStyle.Render(val)
-		})
-		styled = regexp.MustCompile(`: null`).ReplaceAllStringFunc(styled, func(m string) string {
-			return ": " + jqNullStyle.Render("null")
-		})
-		fmt.Println(styled)
-	}
+	fmt.Println(string(data))
+	return nil
 }
 
-func Print(info *ir.FileInfo, mode string) {
-	switch mode {
-	case "jsonify", "json", "":
-		PrintJSON(info)
-	case "mdify", "markdown":
-		PrintMarkdown(info)
-	case "prettify", "pretty":
-		PrintPretty(info)
-	case "tabelify", "table":
-		PrintTable(info)
-	case "commafy", "csv":
-		PrintCSV(info)
-	default:
-		fmt.Fprintf(os.Stderr, "Error: Unknown or unsupported mode: %s\n", mode)
-		os.Exit(2)
+// PrintGLPGAsJq is inspired by jq, providing a colored, pretty-printed JSON output.
+// This function will require more sophisticated handling to replicate jq's query capabilities,
+// but for now, it will focus on themed output of the full GLPG.
+func PrintGLPGAsJq(graph *glpg.GLPG, flags map[string]bool) error {
+	// This is a simplified version. True jq-like behavior would involve parsing and evaluating jq queries.
+	// For now, we'll just pretty print with colors.
+	data, err := json.MarshalIndent(graph, "", "  ")
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error marshaling GLPG for Jq-style output: %v\\n", err)
+		return err
 	}
+
+	// Apply basic coloring - this is a very naive approach
+	// A proper implementation would parse the JSON and apply styles to tokens.
+	coloredOutput := string(data)
+	// Example: color keys (very simplistic)
+	// A more robust solution would involve a JSON tokenizer/parser.
+	// This is just a placeholder for demonstration.
+	// For true jq-like coloring, a more sophisticated JSON traversal and styling is needed.
+	// Consider using a library that can parse JSON and allow styling of elements.
+	// For now, we'll use a simpler approach of styling the whole block or specific patterns.
+
+	// This is a placeholder for actual jq-like coloring.
+	// A real implementation would involve parsing the JSON and applying styles based on token type.
+	// For now, we just print the indented JSON.
+	// To implement coloring, one might iterate through the JSON structure or use regexes (less ideal).
+	// Let's try a regex approach for simple key coloring as a demo.
+	// This is highly simplified and not robust.
+	coloredOutput = regexp.MustCompile(`"([^"]+)":`).ReplaceAllStringFunc(coloredOutput, func(match string) string {
+		parts := regexp.MustCompile(`"([^"]+)":`).FindStringSubmatch(match)
+		if len(parts) > 1 {
+			return jqKeyStyle.Render(fmt.Sprintf(`"%s"`, parts[1])) + ":" // Style the key
+		}
+		return match
+	})
+
+	// Add more rules for strings, numbers, booleans, nulls for a more complete jq look.
+	// This is still very basic.
+	// Strings (example)
+	coloredOutput = regexp.MustCompile(`: "([^"]*)"`).ReplaceAllStringFunc(coloredOutput, func(match string) string {
+		parts := regexp.MustCompile(`: "([^"]*)"`).FindStringSubmatch(match)
+		if len(parts) > 1 {
+			return ": " + jqStringStyle.Render(fmt.Sprintf(`"%s"`, parts[1]))
+		}
+		return match
+	})
+	// Numbers (example)
+	coloredOutput = regexp.MustCompile(`: (\d+\.?\d*)`).ReplaceAllStringFunc(coloredOutput, func(match string) string {
+		parts := regexp.MustCompile(`: (\d+\.?\d*)`).FindStringSubmatch(match)
+		if len(parts) > 1 {
+			return ": " + jqNumStyle.Render(parts[1])
+		}
+		return match
+	})
+	// Booleans (example)
+	coloredOutput = regexp.MustCompile(`: (true|false)`).ReplaceAllStringFunc(coloredOutput, func(match string) string {
+		parts := regexp.MustCompile(`: (true|false)`).FindStringSubmatch(match)
+		if len(parts) > 1 {
+			return ": " + jqBoolStyle.Render(parts[1])
+		}
+		return match
+	})
+	// Null (example)
+	coloredOutput = regexp.MustCompile(`: null`).ReplaceAllStringFunc(coloredOutput, func(match string) string {
+		return ": " + jqNullStyle.Render("null")
+	})
+
+	fmt.Println(coloredOutput)
+	return nil
 }

@@ -2,64 +2,157 @@ package output
 
 import (
 	"fmt"
-	"lazybox/internal/ir"
-	"os"
+	"lazybox/internal/glpg"
+	"lazybox/internal/theme"
+	"sort"
+	"strings"
 
+	"github.com/charmbracelet/bubbles/table"
 	"github.com/charmbracelet/lipgloss"
-	"github.com/jedib0t/go-pretty/v6/table"
-	"github.com/jedib0t/go-pretty/v6/text"
 )
 
+// Styles for table output - initialized in init()
 var (
-	tableHeaderStyle = lipgloss.NewStyle().Bold(true).Foreground(themeColor(CurrentTheme.Base0D))
-	rowStyleEven     = lipgloss.NewStyle().Foreground(themeColor(CurrentTheme.Base05))
-	rowStyleOdd      = lipgloss.NewStyle().Foreground(themeColor(CurrentTheme.Base03))
+	tblHeaderStyle       lipgloss.Style
+	tblCellStyle         lipgloss.Style
+	tblSelectedCellStyle lipgloss.Style
+	tblContainerStyle    lipgloss.Style
+	tblTitleStyle        lipgloss.Style
 )
 
-func PrintTable(info *ir.FileInfo) {
-	t := table.NewWriter()
-	t.SetOutputMirror(os.Stdout)
-	t.Style().Color.Header = text.Colors{text.FgCyan, text.Bold}
-	t.Style().Color.Row = text.Colors{text.FgWhite}
-	t.Style().Color.RowAlternate = text.Colors{text.FgHiBlack}
-	t.Style().Options.DrawBorder = true
-	t.Style().Options.SeparateRows = true
+func initializeTableStyles() {
+	ct := theme.GetDefaultTheme()
+	tblHeaderStyle = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color(ct.Base0D)).Padding(0, 1).BorderBottom(true).BorderForeground(lipgloss.Color(ct.Base03))
+	tblCellStyle = lipgloss.NewStyle().Padding(0, 1)
+	tblSelectedCellStyle = lipgloss.NewStyle().Bold(true).Background(lipgloss.Color(ct.Base02)).Foreground(lipgloss.Color(ct.Base05))
+	tblContainerStyle = lipgloss.NewStyle().Margin(1, 0)
+	tblTitleStyle = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color(ct.Base0E)).MarginBottom(1)
+}
 
-	if info == nil {
-		fmt.Println(tableHeaderStyle.Render("No data."))
-		return
+func init() {
+	initializeTableStyles() // Initialize styles when package is loaded
+}
+
+// PrintGLPGAsTable renders the GLPG data as styled tables using Charmbracelet components.
+func PrintGLPGAsTable(graph *glpg.GLPG, flags map[string]bool) error {
+	if graph == nil || (len(graph.Nodes) == 0 && len(graph.Edges) == 0) {
+		fmt.Println(tblContainerStyle.Render(tblTitleStyle.Render("No data to display in table.")))
+		return nil
 	}
 
-	if info.Type == ir.FileTypeDirectory {
-		t.AppendHeader(table.Row{"Name", "Type", "Size", "Extension"})
-		for _, c := range info.Contents {
-			row := table.Row{c.Name, string(c.Type), c.Size, c.Extension}
-			t.AppendRow(row)
+	var output strings.Builder
+
+	// Render Nodes Table
+	if len(graph.Nodes) > 0 {
+		nodesTableStr := renderNodesTable(graph, flags)
+		output.WriteString(nodesTableStr)
+		output.WriteString("\n")
+	}
+
+	// Render Edges Table
+	if len(graph.Edges) > 0 {
+		edgesTableStr := renderEdgesTable(graph, flags)
+		output.WriteString(edgesTableStr)
+	}
+
+	fmt.Print(output.String())
+	return nil
+}
+
+func renderNodesTable(graph *glpg.GLPG, flags map[string]bool) string {
+	columns := []table.Column{
+		{Title: "Node ID", Width: 20},
+		{Title: "Labels", Width: 25},
+		{Title: "Properties", Width: 50},
+	}
+
+	var rows []table.Row
+	nodeIDs := make([]string, 0, len(graph.Nodes))
+	for id := range graph.Nodes {
+		nodeIDs = append(nodeIDs, id)
+	}
+	sort.Strings(nodeIDs) // Sort for consistent output
+
+	for _, id := range nodeIDs {
+		node := graph.Nodes[id]
+		labelsStr := strings.Join(node.Labels, ", ")
+		propsStr := formatPropertiesForTable(node.Properties)
+		rows = append(rows, table.Row{id, labelsStr, propsStr})
+	}
+
+	t := table.New(
+		table.WithColumns(columns),
+		table.WithRows(rows),
+		table.WithFocused(false),      // No focus needed for static display
+		table.WithHeight(len(rows)+1), // Adjust height dynamically
+		table.WithStyles(table.Styles{
+			Header:   tblHeaderStyle,
+			Cell:     tblCellStyle,
+			Selected: tblSelectedCellStyle,
+		}),
+	)
+
+	return tblContainerStyle.Render(tblTitleStyle.Render("Nodes") + "\n" + t.View())
+}
+
+func renderEdgesTable(graph *glpg.GLPG, flags map[string]bool) string {
+	columns := []table.Column{
+		{Title: "Edge ID", Width: 20},
+		{Title: "Source ID", Width: 20},
+		{Title: "Target ID", Width: 20},
+		{Title: "Label", Width: 20},
+		{Title: "Properties", Width: 35},
+	}
+
+	var rows []table.Row
+	edgeIDs := make([]string, 0, len(graph.Edges))
+	for id := range graph.Edges {
+		edgeIDs = append(edgeIDs, id)
+	}
+	sort.Strings(edgeIDs) // Sort for consistent output
+
+	for _, id := range edgeIDs {
+		edge := graph.Edges[id]
+		propsStr := formatPropertiesForTable(edge.Properties)
+		rows = append(rows, table.Row{id, edge.SourceID, edge.TargetID, edge.Label, propsStr})
+	}
+
+	t := table.New(
+		table.WithColumns(columns),
+		table.WithRows(rows),
+		table.WithFocused(false),
+		table.WithHeight(len(rows)+1),
+		table.WithStyles(table.Styles{
+			Header:   tblHeaderStyle,
+			Cell:     tblCellStyle,
+			Selected: tblSelectedCellStyle,
+		}),
+	)
+
+	return tblContainerStyle.Render(tblTitleStyle.Render("Edges") + "\n" + t.View())
+}
+
+// formatPropertiesForTable converts GLPGProperty map to a string for table display.
+func formatPropertiesForTable(props glpg.GLPGProperty) string {
+	if len(props) == 0 {
+		return "-"
+	}
+	var parts []string
+	// Sort keys for consistent output
+	keys := make([]string, 0, len(props))
+	for k := range props {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+
+	for _, k := range keys {
+		v := props[k]
+		// Simple string representation; could be truncated or ellipsized if too long
+		valStr := fmt.Sprintf("%v", v)
+		if len(valStr) > 30 { // Arbitrary limit for inline display
+			valStr = valStr[:27] + "..."
 		}
-		t.Render()
-		return
+		parts = append(parts, fmt.Sprintf("%s: %s", k, valStr))
 	}
-
-	t.AppendHeader(table.Row{"Field", "Value"})
-	metaRows := [][]string{
-		{"Name", info.Name},
-		{"Path", info.Path},
-		{"Type", string(info.Type)},
-		{"Size", fmt.Sprint(info.Size)},
-		{"Extension", info.Extension},
-	}
-	if info.LineCount > 0 {
-		metaRows = append(metaRows, []string{"LineCount", fmt.Sprint(info.LineCount)})
-	}
-	if info.WordCount > 0 {
-		metaRows = append(metaRows, []string{"WordCount", fmt.Sprint(info.WordCount)})
-	}
-	for _, row := range metaRows {
-		t.AppendRow(table.Row{row[0], row[1]})
-	}
-	t.Render()
-	if info.Content != "" {
-		fmt.Println(tableHeaderStyle.Render("\nContent Preview:\n----------------"))
-		fmt.Println(rowStyleEven.Render(info.Content))
-	}
+	return strings.Join(parts, "; ")
 }

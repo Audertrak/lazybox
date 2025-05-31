@@ -39,9 +39,21 @@ func Read(path string) (*ir.FileInfo, error) {
 	// Attempt to read content
 	contentBytes, readErr := ioutil.ReadFile(absPath)
 	if readErr == nil {
-		fileInfo.Content = string(contentBytes)
-		fileInfo.LineCount = len(strings.Split(fileInfo.Content, "\n"))
-		fileInfo.WordCount = len(strings.Fields(fileInfo.Content))
+		contentStr := string(contentBytes) // Create a string variable
+		fileInfo.Content = &contentStr     // Assign its address
+
+		// Initialize TextAnalysis if it's nil
+		if fileInfo.TextAnalysis == nil {
+			fileInfo.TextAnalysis = &ir.TextInfo{}
+		}
+		// Populate TextAnalysis fields
+		if fileInfo.Content != nil { // Check if content is not nil before dereferencing
+			fileInfo.TextAnalysis.LineCount = len(strings.Split(*fileInfo.Content, "\n"))
+			fileInfo.TextAnalysis.WordCount = len(strings.Fields(*fileInfo.Content))
+		} else {
+			fileInfo.TextAnalysis.LineCount = 0
+			fileInfo.TextAnalysis.WordCount = 0
+		}
 		// TODO: Add a heuristic to decide if it's a text file suitable for deeper analysis
 		// For now, we assume all readable files might be text.
 		// Potentially, we could create a *ir.TextInfo here and embed it or link it.

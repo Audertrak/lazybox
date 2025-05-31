@@ -1,3 +1,4 @@
+// cmd/lazybox/main.go
 package main
 
 import (
@@ -8,16 +9,19 @@ import (
 	"lazybox/internal/file"
 	"lazybox/internal/fn"
 	"lazybox/internal/fs"
+	"lazybox/internal/glpg" // Added GLPG import
 	"lazybox/internal/listinfo"
 	"lazybox/internal/output"
 	"lazybox/internal/structinfo"
 	"lazybox/internal/text"
+	"lazybox/internal/theme" // Import the theme package
 	"os"
 
 	"github.com/spf13/cobra"
 )
 
 func main() {
+	theme.Initialize() // Initialize the theme system
 	printBanner()
 
 	var flagAll bool
@@ -28,6 +32,8 @@ func main() {
 	var flagIR bool
 	var flagSilent bool
 	var flagTokenize bool
+
+	var outputMode string // Variable to hold the output mode from the flag
 
 	var rootCmd = &cobra.Command{
 		Use:   "lazybox",
@@ -42,6 +48,7 @@ func main() {
 	rootCmd.PersistentFlags().BoolVarP(&flagIR, "ir", "I", false, "Print the intermediate representation of the data.")
 	rootCmd.PersistentFlags().BoolVarP(&flagSilent, "silent", "s", false, "Create an intermediate representation of the data, but do not print it to stdout.")
 	rootCmd.PersistentFlags().BoolVarP(&flagTokenize, "tokenize", "t", false, "Remove articles or other prose grammar and use simple key:value pairs.")
+	rootCmd.PersistentFlags().StringVarP(&outputMode, "output", "o", "jsonify", "Output mode (e.g., jsonify, prettify, mdify, tableify, commafy, fastfetch)")
 
 	var fsCmd = &cobra.Command{
 		Use:   "fs [path] [mode]",
@@ -52,16 +59,36 @@ func main() {
 			if len(args) > 0 {
 				path = args[0]
 			}
-			mode := "jsonify"
+			// Mode is now determined by the --output flag or its default value "jsonify"
+			// The positional mode argument is effectively ignored if --output is used.
+			// For now, the --output flag takes precedence.
+			mode := outputMode
 			if len(args) > 1 {
-				mode = args[1]
+				// If a positional mode is given AND --output was not changed from default,
+				// we can consider using the positional one.
+				// However, to keep it simple, we'll let the --output flag control it.
+				// If --output is explicitly set, it overrides the positional argument.
+				// If --output is not set, it defaults to "jsonify", and if a positional mode is also present,
+				// the current logic will use the --output default.
+				// To prioritize positional:
+				if cmd.Flags().Changed("output") {
+					mode = outputMode
+				} else {
+					mode = args[1]
+				}
 			}
+
 			fileInfoIR, err := fs.Scan(path)
 			if err != nil {
 				fmt.Fprintf(os.Stderr, "Error scanning %s: %v\n", path, err)
 				os.Exit(1)
 			}
-			handleOutput(fileInfoIR, mode, flagIR, flagAll, flagMin, flagLess, flagTokenize, flagSilent)
+			glpgData, err := glpg.ToGLPG(fileInfoIR)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "Error converting to GLPG: %v\n", err)
+				os.Exit(1)
+			}
+			handleOutput(glpgData, mode, collectFlags(cmd))
 		},
 	}
 
@@ -71,16 +98,21 @@ func main() {
 		Args:  cobra.RangeArgs(1, 2),
 		Run: func(cmd *cobra.Command, args []string) {
 			path := args[0]
-			mode := "jsonify"
-			if len(args) > 1 {
-				mode = args[1]
+			mode := outputMode // Use the --output flag
+			if len(args) > 1 && !cmd.Flags().Changed("output") {
+				mode = args[1] // Fallback to positional if --output not explicitly set
 			}
-			fileDataIR, err := file.Read(path) // Assuming file.Read returns a type compatible with handleOutput (e.g. *ir.FileInfo or *ir.TextInfo)
+			fileDataIR, err := file.Read(path)
 			if err != nil {
 				fmt.Fprintf(os.Stderr, "Error reading file %s: %v\n", path, err)
 				os.Exit(1)
 			}
-			handleOutput(fileDataIR, mode, flagIR, flagAll, flagMin, flagLess, flagTokenize, flagSilent)
+			glpgData, err := glpg.ToGLPG(fileDataIR)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "Error converting to GLPG: %v\n", err)
+				os.Exit(1)
+			}
+			handleOutput(glpgData, mode, collectFlags(cmd))
 		},
 	}
 
@@ -90,17 +122,22 @@ func main() {
 		Args:  cobra.RangeArgs(1, 2),
 		Run: func(cmd *cobra.Command, args []string) {
 			// path := args[0]
-			// mode := "jsonify"
-			// if len(args) > 1 {
-			// 	mode = args[1]
+			// mode := outputMode // Use the --output flag
+			// if len(args) > 1 && !cmd.Flags().Changed("output") {
+			// 	mode = args[1] // Fallback to positional
 			// }
-			// apiInfoIR, err := api.Extract(path)
+			// apiInfoIR, err := api.Extract(path) // Placeholder for actual API extraction
 			// if err != nil {
 			// 	fmt.Fprintf(os.Stderr, "Error extracting API from %s: %v\n", path, err)
 			// 	os.Exit(1)
 			// }
-			// handleOutput(apiInfoIR, mode, flagIR, flagAll, flagMin, flagLess, flagTokenize, flagSilent)
-			fmt.Println("TODO: API command output handling to be implemented with generalized handleOutput")
+			// glpgData, err := glpg.ToGLPG(apiInfoIR)
+			// if err != nil {
+			// 	fmt.Fprintf(os.Stderr, "Error converting API info to GLPG: %v\n", err)
+			// 	os.Exit(1)
+			// }
+			// handleOutput(glpgData, mode, collectFlags(cmd))
+			fmt.Println("TODO: API command output handling to be implemented with GLPG")
 		},
 	}
 
@@ -110,17 +147,22 @@ func main() {
 		Args:  cobra.RangeArgs(1, 2),
 		Run: func(cmd *cobra.Command, args []string) {
 			// path := args[0]
-			// mode := "jsonify"
-			// if len(args) > 1 {
-			// 	mode = args[1]
+			// mode := outputMode // Use the --output flag
+			// if len(args) > 1 && !cmd.Flags().Changed("output") {
+			// 	mode = args[1] // Fallback to positional
 			// }
-			// pkgInfoIR, err := pkg.Crawl(path)
+			// pkgInfoIR, err := pkg.Crawl(path) // Placeholder for actual package crawling
 			// if err != nil {
 			// 	fmt.Fprintf(os.Stderr, "Error crawling package %s: %v\n", path, err)
 			// 	os.Exit(1)
 			// }
-			// handleOutput(pkgInfoIR, mode, flagIR, flagAll, flagMin, flagLess, flagTokenize, flagSilent)
-			fmt.Println("TODO: PKG command output handling to be implemented with generalized handleOutput")
+			// glpgData, err := glpg.ToGLPG(pkgInfoIR)
+			// if err != nil {
+			// 	fmt.Fprintf(os.Stderr, "Error converting package info to GLPG: %v\n", err)
+			// 	os.Exit(1)
+			// }
+			// handleOutput(glpgData, mode, collectFlags(cmd))
+			fmt.Println("TODO: PKG command output handling to be implemented with GLPG")
 		},
 	}
 
@@ -130,12 +172,11 @@ func main() {
 		Args:  cobra.RangeArgs(1, 2),
 		Run: func(cmd *cobra.Command, args []string) {
 			path := args[0]
-			mode := "jsonify"
-			if len(args) > 1 {
-				mode = args[1]
+			mode := outputMode // Use the --output flag
+			if len(args) > 1 && !cmd.Flags().Changed("output") {
+				mode = args[1] // Fallback to positional
 			}
 
-			// First, read the file to get its basic info and content
 			fileData, err := file.Read(path)
 			if err != nil {
 				fmt.Fprintf(os.Stderr, "Error reading file %s: %v\n", path, err)
@@ -146,14 +187,17 @@ func main() {
 				os.Exit(1)
 			}
 
-			// Now, analyze the content to get TextInfo
-			textInfoIR, err := text.Analyze(fileData.Content, path)
+			textInfoIR, err := text.Analyze(*fileData.Content, path) // Dereference fileData.Content
 			if err != nil {
 				fmt.Fprintf(os.Stderr, "Error analyzing text from %s: %v\n", path, err)
 				os.Exit(1)
 			}
-			// text.Analyze populates its own FileInfo, so we can pass textInfoIR directly.
-			handleOutput(textInfoIR, mode, flagIR, flagAll, flagMin, flagLess, flagTokenize, flagSilent)
+			glpgData, err := glpg.ToGLPG(textInfoIR)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "Error converting to GLPG: %v\n", err)
+				os.Exit(1)
+			}
+			handleOutput(glpgData, mode, collectFlags(cmd))
 		},
 	}
 
@@ -163,16 +207,21 @@ func main() {
 		Args:  cobra.RangeArgs(1, 2),
 		Run: func(cmd *cobra.Command, args []string) {
 			path := args[0]
-			mode := "jsonify"
-			if len(args) > 1 {
-				mode = args[1]
+			mode := outputMode // Use the --output flag
+			if len(args) > 1 && !cmd.Flags().Changed("output") {
+				mode = args[1] // Fallback to positional
 			}
-			ir, err := code.ExtractPlaceholder(path)
+			codeInfoIR, err := code.ExtractPlaceholder(path)
 			if err != nil {
 				fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 				os.Exit(1)
 			}
-			handleOutput(ir, mode, flagIR, flagAll, flagMin, flagLess, flagTokenize, flagSilent)
+			glpgData, err := glpg.ToGLPG(codeInfoIR)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "Error converting to GLPG: %v\n", err)
+				os.Exit(1)
+			}
+			handleOutput(glpgData, mode, collectFlags(cmd))
 		},
 	}
 
@@ -182,16 +231,21 @@ func main() {
 		Args:  cobra.RangeArgs(1, 2),
 		Run: func(cmd *cobra.Command, args []string) {
 			path := args[0]
-			mode := "jsonify"
-			if len(args) > 1 {
-				mode = args[1]
+			mode := outputMode // Use the --output flag
+			if len(args) > 1 && !cmd.Flags().Changed("output") {
+				mode = args[1] // Fallback to positional
 			}
-			ir, err := fn.ExtractPlaceholder(path)
+			funcInfoIR, err := fn.ExtractPlaceholder(path)
 			if err != nil {
 				fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 				os.Exit(1)
 			}
-			handleOutput(ir, mode, flagIR, flagAll, flagMin, flagLess, flagTokenize, flagSilent)
+			glpgData, err := glpg.ToGLPG(funcInfoIR)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "Error converting to GLPG: %v\n", err)
+				os.Exit(1)
+			}
+			handleOutput(glpgData, mode, collectFlags(cmd))
 		},
 	}
 
@@ -200,16 +254,21 @@ func main() {
 		Short: "Parse environment variables and emit their values.",
 		Args:  cobra.RangeArgs(0, 1),
 		Run: func(cmd *cobra.Command, args []string) {
-			mode := "jsonify"
-			if len(args) > 0 {
-				mode = args[0]
+			mode := outputMode // Use the --output flag
+			if len(args) > 0 && !cmd.Flags().Changed("output") {
+				mode = args[0] // Fallback to positional
 			}
-			ir, err := env.ExtractPlaceholder()
+			envInfoIR, err := env.ExtractPlaceholder()
 			if err != nil {
 				fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 				os.Exit(1)
 			}
-			handleOutput(ir, mode, flagIR, flagAll, flagMin, flagLess, flagTokenize, flagSilent)
+			glpgData, err := glpg.ToGLPG(envInfoIR)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "Error converting to GLPG: %v\n", err)
+				os.Exit(1)
+			}
+			handleOutput(glpgData, mode, collectFlags(cmd))
 		},
 	}
 
@@ -219,16 +278,21 @@ func main() {
 		Args:  cobra.RangeArgs(1, 2),
 		Run: func(cmd *cobra.Command, args []string) {
 			path := args[0]
-			mode := "jsonify"
-			if len(args) > 1 {
-				mode = args[1]
+			mode := outputMode // Use the --output flag
+			if len(args) > 1 && !cmd.Flags().Changed("output") {
+				mode = args[1] // Fallback to positional
 			}
-			ir, err := structinfo.ExtractPlaceholder(path)
+			structInfoIR, err := structinfo.ExtractPlaceholder(path)
 			if err != nil {
 				fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 				os.Exit(1)
 			}
-			handleOutput(ir, mode, flagIR, flagAll, flagMin, flagLess, flagTokenize, flagSilent)
+			glpgData, err := glpg.ToGLPG(structInfoIR)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "Error converting to GLPG: %v\n", err)
+				os.Exit(1)
+			}
+			handleOutput(glpgData, mode, collectFlags(cmd))
 		},
 	}
 
@@ -238,16 +302,21 @@ func main() {
 		Args:  cobra.RangeArgs(1, 2),
 		Run: func(cmd *cobra.Command, args []string) {
 			path := args[0]
-			mode := "jsonify"
-			if len(args) > 1 {
-				mode = args[1]
+			mode := outputMode // Use the --output flag
+			if len(args) > 1 && !cmd.Flags().Changed("output") {
+				mode = args[1] // Fallback to positional
 			}
-			ir, err := enuminfo.ExtractPlaceholder(path)
+			enumInfoIR, err := enuminfo.ExtractPlaceholder(path)
 			if err != nil {
 				fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 				os.Exit(1)
 			}
-			handleOutput(ir, mode, flagIR, flagAll, flagMin, flagLess, flagTokenize, flagSilent)
+			glpgData, err := glpg.ToGLPG(enumInfoIR)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "Error converting to GLPG: %v\n", err)
+				os.Exit(1)
+			}
+			handleOutput(glpgData, mode, collectFlags(cmd))
 		},
 	}
 
@@ -257,24 +326,21 @@ func main() {
 		Args:  cobra.RangeArgs(1, 2),
 		Run: func(cmd *cobra.Command, args []string) {
 			path := args[0]
-			mode := "jsonify"
-			if len(args) > 1 {
-				mode = args[1]
+			mode := outputMode // Use the --output flag
+			if len(args) > 1 && !cmd.Flags().Changed("output") {
+				mode = args[1] // Fallback to positional
 			}
-			ir, err := listinfo.ExtractPlaceholder(path)
+			listInfoIR, err := listinfo.ExtractPlaceholder(path)
 			if err != nil {
 				fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 				os.Exit(1)
 			}
-			handleOutput(ir, mode, flagIR, flagAll, flagMin, flagLess, flagTokenize, flagSilent)
-		},
-	}
-
-	var fetchCmd = &cobra.Command{
-		Use:   "fetch",
-		Short: "Show system info in fastfetch/neofetch style",
-		Run: func(cmd *cobra.Command, args []string) {
-			output.PrintFastfetchStyle()
+			glpgData, err := glpg.ToGLPG(listInfoIR)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "Error converting to GLPG: %v\n", err)
+				os.Exit(1)
+			}
+			handleOutput(glpgData, mode, collectFlags(cmd))
 		},
 	}
 
@@ -289,60 +355,57 @@ func main() {
 	rootCmd.AddCommand(structCmd)
 	rootCmd.AddCommand(enumCmd)
 	rootCmd.AddCommand(listCmd)
-	rootCmd.AddCommand(fetchCmd)
+	// rootCmd.AddCommand(fetchCmd) // Commented out as fetchCmd is not defined in the provided code
 	rootCmd.Execute()
 }
 
-func handleOutput(data interface{}, mode string, flagIR, flagAll, flagMin, flagLess, flagTokenize, flagSilent bool) {
+// collectFlags gathers all persistent flags into a map.
+func collectFlags(cmd *cobra.Command) map[string]bool {
+	flags := make(map[string]bool)
+	flags["all"], _ = cmd.Flags().GetBool("all")
+	flags["verbose"], _ = cmd.Flags().GetBool("verbose")
+	flags["less"], _ = cmd.Flags().GetBool("less")
+	flags["min"], _ = cmd.Flags().GetBool("min")
+	flags["incremental"], _ = cmd.Flags().GetBool("incremental")
+	flags["ir"], _ = cmd.Flags().GetBool("ir")
+	flags["silent"], _ = cmd.Flags().GetBool("silent")
+	flags["tokenize"], _ = cmd.Flags().GetBool("tokenize")
+	return flags
+}
+
+func handleOutput(data *glpg.GLPG, mode string, flags map[string]bool) {
 	if data == nil {
 		fmt.Fprintln(os.Stderr, "Error: No data to output.")
 		os.Exit(1)
 	}
-	if flagSilent {
+	if silentFlag, ok := flags["silent"]; ok && silentFlag {
 		return // Do not print anything
 	}
 
-	// IR flag takes precedence and prints the raw data structure passed to handleOutput.
-	if flagIR {
-		output.PrintJSON(data)
-		return
-	}
-
-	// The rest of the flags and modes will operate on the `data interface{}`.
-	// Output functions (PrintJSON, PrintMarkdown, etc.) must be updated to handle `interface{}`
-	// using type assertions or reflection to correctly process different IR types.
-
-	if flagAll {
-		output.PrintJSON(data)
-		output.PrintMarkdown(data)
-		output.PrintPretty(data)
-		output.PrintTable(data)
-		return
-	}
-
-	if flagMin {
-		output.PrintMinJSON(data)
-		return
-	}
-
-	if flagLess {
-		output.PrintLessJSON(data)
-		return
-	}
-
-	if flagTokenize {
-		output.PrintTokenized(data)
-		return
-	}
-
+	var err error
+	// Dispatch to the correct GLPG-based output function based on mode
 	switch mode {
-	case "jq":
-		output.PrintJQ(data)
+	case "jsonify":
+		err = output.PrintGLPGAsJSON(data, flags)
 	case "prettify":
-		output.PrintPretty(data)
-	// Add other modes here, ensuring they can handle `interface{}`
+		err = output.PrintGLPGAsPretty(data, flags)
+	case "mdify":
+		err = output.PrintGLPGAsMarkdown(data, flags)
+	case "tabelify":
+		err = output.PrintGLPGAsTable(data, flags)
+	case "commafy": // Added commafy (CSV)
+		err = output.PrintGLPGAsCSV(data, flags)
+	case "fastfetch": // Added fastfetch style
+		err = output.PrintGLPGAsFastfetch(data, flags)
+	// Add other cases as they are implemented
 	default:
-		output.Print(data, mode) // Assuming output.Print will handle the interface{} correctly.
+		fmt.Fprintf(os.Stderr, "Warning: Mode '%s' not implemented or recognized for GLPG. Defaulting to JSON output.\n", mode)
+		err = output.PrintGLPGAsJSON(data, flags) // Fallback to JSON
+	}
+
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error during output generation for mode '%s': %v\n", mode, err)
+		// Decide if we should os.Exit(1) here. For now, just printing the error.
 	}
 }
 

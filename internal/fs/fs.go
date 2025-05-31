@@ -35,7 +35,7 @@ func Scan(path string) (*ir.FileInfo, error) {
 
 	// Type determination
 	if info.IsDir() {
-		fileIR.Type = ir.FileTypeDirectory
+		fileIR.Type = ir.FileTypeDir // Corrected: FileTypeDir
 	} else if info.Mode()&os.ModeSymlink != 0 {
 		fileIR.Type = ir.FileTypeSymlink
 		symlinkTarget, err := os.Readlink(absPath)
@@ -56,25 +56,28 @@ func Scan(path string) (*ir.FileInfo, error) {
 
 	// Git repository detection
 	isGit, gitDir := isGitRepo(absPath)
-	fileIR.IsGitRepo = isGit
+	if fileIR.Metadata == nil {
+		fileIR.Metadata = make(map[string]interface{})
+	}
+	fileIR.Metadata["is_git_repo"] = isGit // Corrected: Use Metadata
 	if isGit {
 		remotes, err := getGitRemotes(gitDir)
 		if err == nil {
-			fileIR.GitRemotes = remotes
+			fileIR.Metadata["git_remotes"] = remotes // Corrected: Use Metadata
 		} else {
 			// Optionally log this error or store it in fileIR.Error
-			// fileIR.Error += fmt.Sprintf("; git remote error: %v", err)
+			// fileIR.Error += fmt.Sprintf(\"; git remote error: %v\", err)
 		}
 	}
 
-	if fileIR.Type == ir.FileTypeDirectory {
+	if fileIR.Type == ir.FileTypeDir { // Corrected: FileTypeDir
 		entries, err := os.ReadDir(absPath)
 		if err != nil {
 			fileIR.Error += fmt.Sprintf("; failed to read directory %s: %v", absPath, err)
 			return fileIR, nil
 		}
 
-		fileIR.Contents = make([]*ir.FileInfo, 0, len(entries))
+		fileIR.Children = make([]*ir.FileInfo, 0, len(entries)) // Corrected: Children
 		for _, entry := range entries {
 			entryPath := filepath.Join(absPath, entry.Name())
 
@@ -89,17 +92,17 @@ func Scan(path string) (*ir.FileInfo, error) {
 				entryInfo, statErr := os.Lstat(entryPath)
 				if statErr == nil {
 					if entryInfo.IsDir() {
-						errorEntryIR.Type = ir.FileTypeDirectory
+						errorEntryIR.Type = ir.FileTypeDir // Corrected: FileTypeDir
 					} else if entryInfo.Mode()&os.ModeSymlink != 0 {
 						errorEntryIR.Type = ir.FileTypeSymlink
 					} else {
 						errorEntryIR.Type = ir.FileTypeFile
 					}
 				}
-				fileIR.Contents = append(fileIR.Contents, errorEntryIR)
+				fileIR.Children = append(fileIR.Children, errorEntryIR) // Corrected: Children
 				continue
 			}
-			fileIR.Contents = append(fileIR.Contents, entryIR)
+			fileIR.Children = append(fileIR.Children, entryIR) // Corrected: Children
 		}
 	}
 

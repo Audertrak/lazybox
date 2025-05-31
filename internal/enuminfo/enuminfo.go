@@ -26,7 +26,7 @@ func ExtractPlaceholder(path string) (*ir.FileInfo, error) {
 		Path:      absPath,
 		Type:      "enum",
 		Size:      fi.Size(),
-		Content:   content,
+		Content:   &content, // Assign address of content
 		Extension: filepath.Ext(absPath),
 		Mode:      fi.Mode().String(),
 	}, nil

@@ -2,101 +2,129 @@ package output
 
 import (
 	"fmt"
+	"lazybox/internal/glpg"
+	"lazybox/internal/theme"
 	"os"
-	"os/exec"
 	"runtime"
+	"sort"
 	"strings"
 
 	"github.com/charmbracelet/lipgloss"
 )
 
-// PrintFastfetchStyle prints a system info block inspired by fastfetch/neofetch
-func PrintFastfetchStyle() {
+// PrintGLPGAsFastfetch renders a GLPG in a style inspired by fastfetch/neofetch.
+// It displays a summary of the graph, including node and edge counts, and then
+// lists nodes and their properties, styled with the current Base16 theme.
+func PrintGLPGAsFastfetch(graph *glpg.GLPG, flags map[string]bool) error {
+	if graph == nil {
+		// TODO: Themed output for "no data"
+		fmt.Println("No data to display.")
+		return nil
+	}
+
+	currentTheme := theme.GetDefaultTheme() // Assuming theme is initialized
+
+	// Define styles based on the theme
+	titleStyle := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color(currentTheme.Base0D))
+	labelStyle := lipgloss.NewStyle().Foreground(lipgloss.Color(currentTheme.Base0B)).Bold(true)
+	valueStyle := lipgloss.NewStyle().Foreground(lipgloss.Color(currentTheme.Base05))
+	separatorStyle := lipgloss.NewStyle().Foreground(lipgloss.Color(currentTheme.Base03))
+	containerStyle := lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(lipgloss.Color(currentTheme.Base0C)).Padding(1, 2).MarginBottom(1)
+
+	var sb strings.Builder
+
+	// --- System Info / Graph Summary ---
 	osName := runtime.GOOS
 	arch := runtime.GOARCH
-	user := "?"
-	host := "?"
-	if u := getEnv("USERNAME"); u != "" {
-		user = u
+	user := os.Getenv("USER") // Simpler way to get user, fallback if empty
+	if user == "" {
+		user = os.Getenv("USERNAME")
 	}
-	if h := getEnv("COMPUTERNAME"); h != "" {
-		host = h
-	}
+	host, _ := os.Hostname()
 	goVersion := runtime.Version()
 
-	// Use base16 theme colors
-	colors := []lipgloss.Color{
-		themeColor(CurrentTheme.Base08),
-		themeColor(CurrentTheme.Base09),
-		themeColor(CurrentTheme.Base0A),
-		themeColor(CurrentTheme.Base0B),
-		themeColor(CurrentTheme.Base0C),
-		themeColor(CurrentTheme.Base0D),
-		themeColor(CurrentTheme.Base0E),
-		themeColor(CurrentTheme.Base0F),
-	}
-	var colorBlocks []string
-	for _, c := range colors {
-		colorBlocks = append(colorBlocks, lipgloss.NewStyle().Background(c).Foreground(c).Render("   "))
-	}
-	colorLine := lipgloss.JoinHorizontal(lipgloss.Top, colorBlocks...)
+	sb.WriteString(titleStyle.Render("lazybox GLPG Report") + "\n")
+	sb.WriteString(labelStyle.Render("User: ") + valueStyle.Render(fmt.Sprintf("%s@%s", user, host)) + "\n")
+	sb.WriteString(labelStyle.Render("OS:   ") + valueStyle.Render(osName) + "\n")
+	sb.WriteString(labelStyle.Render("Arch: ") + valueStyle.Render(arch) + "\n")
+	sb.WriteString(labelStyle.Render("Go:   ") + valueStyle.Render(goVersion) + "\n")
+	sb.WriteString(labelStyle.Render("Nodes: ") + valueStyle.Render(fmt.Sprintf("%d", len(graph.Nodes))) + "\n")
+	sb.WriteString(labelStyle.Render("Edges: ") + valueStyle.Render(fmt.Sprintf("%d", len(graph.Edges))) + "\n")
+	sb.WriteString(separatorStyle.Render(strings.Repeat("─", 40)) + "\n\n")
 
-	banner := lipgloss.NewStyle().Bold(true).Foreground(themeColor(CurrentTheme.Base0D)).Render("lazybox")
-	infoLines := []string{
-		fmt.Sprintf("%s@%s", user, host),
-		fmt.Sprintf("OS:   %s", osName),
-		fmt.Sprintf("Arch: %s", arch),
-		fmt.Sprintf("Go:   %s", goVersion),
+	// --- Nodes Details ---
+	sb.WriteString(titleStyle.Render("Nodes") + "\n")
+
+	// Sort node IDs for consistent output
+	nodeIDs := make([]string, 0, len(graph.Nodes))
+	for id := range graph.Nodes {
+		nodeIDs = append(nodeIDs, id)
 	}
-	labelStyle := lipgloss.NewStyle().Foreground(themeColor(CurrentTheme.Base0B)).Bold(true)
-	valueStyle := lipgloss.NewStyle().Foreground(themeColor(CurrentTheme.Base05))
-	var infoStyled []string
-	for _, line := range infoLines {
-		parts := strings.SplitN(line, ":", 2)
-		if len(parts) == 2 {
-			infoStyled = append(infoStyled, labelStyle.Render(parts[0]+":")+" "+valueStyle.Render(strings.TrimSpace(parts[1])))
-		} else {
-			infoStyled = append(infoStyled, valueStyle.Render(line))
+	sort.Strings(nodeIDs)
+
+	for _, nodeID := range nodeIDs {
+		node := graph.Nodes[nodeID]
+		nodeLabelStr := ""
+		if len(node.Labels) > 0 {
+			nodeLabelStr = strings.Join(node.Labels, ", ") // Join labels if multiple, or use the first one
+		}
+		sb.WriteString(labelStyle.Render("ID:    ") + valueStyle.Render(node.ID) + "\n")
+		sb.WriteString(labelStyle.Render("Labels: ") + valueStyle.Render(nodeLabelStr) + "\n") // Changed from Label to Labels
+
+		// Sort property keys for consistent output
+		propKeys := make([]string, 0, len(node.Properties))
+		for k := range node.Properties {
+			propKeys = append(propKeys, k)
+		}
+		sort.Strings(propKeys)
+
+		for _, key := range propKeys {
+			val := node.Properties[key]
+			sb.WriteString(labelStyle.Render(fmt.Sprintf("  %s: ", key)) + valueStyle.Render(fmt.Sprintf("%v", val)) + "\n")
+		}
+		sb.WriteString("\n")
+	}
+
+	// --- Edges Details (Optional, can be verbose) ---
+	if flags["edges"] { // Example flag to control edge printing
+		sb.WriteString(separatorStyle.Render(strings.Repeat("─", 40)) + "\n\n")
+		sb.WriteString(titleStyle.Render("Edges") + "\n")
+
+		// Sort edge IDs for consistent output
+		edgeIDs := make([]string, 0, len(graph.Edges))
+		for id := range graph.Edges {
+			edgeIDs = append(edgeIDs, id)
+		}
+		sort.Strings(edgeIDs)
+
+		for _, edgeID := range edgeIDs {
+			edge := graph.Edges[edgeID]
+			sb.WriteString(labelStyle.Render("ID:     ") + valueStyle.Render(edge.ID) + "\n")
+			sb.WriteString(labelStyle.Render("Label:  ") + valueStyle.Render(edge.Label) + "\n")
+			sb.WriteString(labelStyle.Render("Source: ") + valueStyle.Render(edge.SourceID) + "\n")
+			sb.WriteString(labelStyle.Render("Target: ") + valueStyle.Render(edge.TargetID) + "\n")
+
+			// Sort property keys for consistent output
+			propKeys := make([]string, 0, len(edge.Properties))
+			for k := range edge.Properties {
+				propKeys = append(propKeys, k)
+			}
+			sort.Strings(propKeys)
+
+			for _, key := range propKeys {
+				val := edge.Properties[key]
+				sb.WriteString(labelStyle.Render(fmt.Sprintf("  %s: ", key)) + valueStyle.Render(fmt.Sprintf("%v", val)) + "\n")
+			}
+			sb.WriteString("\n")
 		}
 	}
-	infoBlock := lipgloss.JoinVertical(lipgloss.Left, infoStyled...)
 
-	block := lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(themeColor(CurrentTheme.Base0C)).Padding(1, 4).Background(themeColor(CurrentTheme.Base00)).Render(
-		colorLine + "\n" + banner + "\n" + infoBlock + "\n" + colorLine,
-	)
-	fmt.Println(block)
-
-	// Try to print a logo with figlet if available
-	if _, err := exec.LookPath("figlet"); err == nil {
-		cmd := exec.Command("figlet", "lazybox")
-		out, err := cmd.Output()
-		if err == nil {
-			fmt.Print(lipgloss.NewStyle().Foreground(themeColor(CurrentTheme.Base0D)).Render(string(out)))
-		}
-	}
+	fmt.Println(containerStyle.Render(sb.String()))
+	return nil
 }
 
-func getEnv(key string) string {
-	if v, ok := syscallEnv(key); ok {
-		return v
-	}
-	return ""
-}
+// themeColor is a helper, assuming it's defined elsewhere or we use lipgloss.Color directly
+// For this refactor, we'll use lipgloss.Color(currentTheme.BaseXX) directly.
 
-// syscallEnv is a helper for getting env vars cross-platform
-func syscallEnv(key string) (string, bool) {
-	for _, e := range strings.Split(strings.Join([]string{getEnvWin(), getEnvUnix()}, ";"), ";") {
-		if kv := strings.SplitN(e, "=", 2); len(kv) == 2 && kv[0] == key {
-			return kv[1], true
-		}
-	}
-	return "", false
-}
-
-func getEnvWin() string {
-	return strings.Join([]string{"USERNAME=" + os.Getenv("USERNAME"), "COMPUTERNAME=" + os.Getenv("COMPUTERNAME")}, ";")
-}
-
-func getEnvUnix() string {
-	return strings.Join([]string{"USER=" + os.Getenv("USER"), "HOSTNAME=" + os.Getenv("HOSTNAME")}, ";")
-}
+// getEnv and related functions are removed as direct os.Getenv or os.Hostname is simpler for this context.
+// The original fastfetch had a more complex env var retrieval, which is not strictly needed for GLPG display.
