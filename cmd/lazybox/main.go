@@ -16,9 +16,31 @@ import (
 	"lazybox/internal/text"
 	"lazybox/internal/theme" // Import the theme package
 	"os"
+	"strings"
 
+	"github.com/charmbracelet/lipgloss"
 	"github.com/spf13/cobra"
 )
+
+// Mode aliases for user convenience
+var modeAliases = map[string]string{
+	"json":       "jsonify",
+	"jsonify":    "jsonify",
+	"pretty":     "prettify",
+	"prettify":   "prettify",
+	"md":         "mdify",
+	"mdify":      "mdify",
+	"table":      "tabelify",
+	"tabelify":   "tabelify",
+	"csv":        "commafy",
+	"commafy":    "commafy",
+	"fastfetch":  "fastfetch",
+	"commentify": "commentify",
+	"flowify":    "flowify",
+	// Add more as needed
+}
+
+var commentifyLang string // Language for commentify mode
 
 func main() {
 	theme.Initialize() // Initialize the theme system
@@ -49,6 +71,7 @@ func main() {
 	rootCmd.PersistentFlags().BoolVarP(&flagSilent, "silent", "s", false, "Create an intermediate representation of the data, but do not print it to stdout.")
 	rootCmd.PersistentFlags().BoolVarP(&flagTokenize, "tokenize", "t", false, "Remove articles or other prose grammar and use simple key:value pairs.")
 	rootCmd.PersistentFlags().StringVarP(&outputMode, "output", "o", "jsonify", "Output mode (e.g., jsonify, prettify, mdify, tableify, commafy, fastfetch)")
+	rootCmd.PersistentFlags().StringVar(&commentifyLang, "lang", "bash", "Language for commentify mode (e.g., bash, python, go, c, lua, sql)")
 
 	var fsCmd = &cobra.Command{
 		Use:   "fs [path] [mode]",
@@ -375,16 +398,22 @@ func collectFlags(cmd *cobra.Command) map[string]bool {
 
 func handleOutput(data *glpg.GLPG, mode string, flags map[string]bool) {
 	if data == nil {
-		fmt.Fprintln(os.Stderr, "Error: No data to output.")
+		styledError("Error: No data to output.")
 		os.Exit(1)
 	}
 	if silentFlag, ok := flags["silent"]; ok && silentFlag {
 		return // Do not print anything
 	}
 
+	mode = strings.ToLower(mode)
+	canonicalMode, ok := modeAliases[mode]
+	if !ok {
+		styledErrorWithModes(mode)
+		return
+	}
+
 	var err error
-	// Dispatch to the correct GLPG-based output function based on mode
-	switch mode {
+	switch canonicalMode {
 	case "jsonify":
 		err = output.PrintGLPGAsJSON(data, flags)
 	case "prettify":
@@ -393,20 +422,51 @@ func handleOutput(data *glpg.GLPG, mode string, flags map[string]bool) {
 		err = output.PrintGLPGAsMarkdown(data, flags)
 	case "tabelify":
 		err = output.PrintGLPGAsTable(data, flags)
-	case "commafy": // Added commafy (CSV)
+	case "commafy":
 		err = output.PrintGLPGAsCSV(data, flags)
-	case "fastfetch": // Added fastfetch style
+	case "fastfetch":
 		err = output.PrintGLPGAsFastfetch(data, flags)
-	// Add other cases as they are implemented
+	case "commentify":
+		err = output.PrintGLPGAsComment(data, flags, commentifyLang)
+	case "flowify":
+		err = output.PrintGLPGAsFlow(data, flags)
 	default:
-		fmt.Fprintf(os.Stderr, "Warning: Mode '%s' not implemented or recognized for GLPG. Defaulting to JSON output.\n", mode)
-		err = output.PrintGLPGAsJSON(data, flags) // Fallback to JSON
+		styledErrorWithModes(mode)
+		return
 	}
 
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error during output generation for mode '%s': %v\n", mode, err)
-		// Decide if we should os.Exit(1) here. For now, just printing the error.
+		styledError(fmt.Sprintf("Error during output generation for mode '%s': %v", canonicalMode, err))
 	}
+}
+
+// Styled error output using lipgloss and theme
+func styledError(msg string) {
+	ct := theme.GetDefaultTheme()
+	style := lipgloss.NewStyle().Foreground(lipgloss.Color(ct.Base08)).Bold(true)
+	fmt.Fprintln(os.Stderr, style.Render(msg))
+}
+
+// Styled error for unknown mode, with available modes listed
+func styledErrorWithModes(badMode string) {
+	ct := theme.GetDefaultTheme()
+	errStyle := lipgloss.NewStyle().Foreground(lipgloss.Color(ct.Base08)).Bold(true)
+	headerStyle := lipgloss.NewStyle().Foreground(lipgloss.Color(ct.Base0E)).Bold(true)
+	modeStyle := lipgloss.NewStyle().Foreground(lipgloss.Color(ct.Base0B)).Bold(true)
+	fmt.Fprintln(os.Stderr, errStyle.Render(fmt.Sprintf("Unknown output mode: '%s'\n", badMode)))
+	fmt.Fprintln(os.Stderr, headerStyle.Render("Available output modes:"))
+	modes := make([]string, 0, len(modeAliases))
+	seen := make(map[string]bool)
+	for _, canonical := range modeAliases {
+		if !seen[canonical] {
+			modes = append(modes, canonical)
+			seen[canonical] = true
+		}
+	}
+	for _, m := range modes {
+		fmt.Fprintln(os.Stderr, "  "+modeStyle.Render(m))
+	}
+	fmt.Fprintln(os.Stderr)
 }
 
 // Add a CLI banner at startup for supreme vibes

@@ -44,25 +44,53 @@ var (
 	jqNullStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color(theme.GetDefaultTheme().Base03)).Italic(true)
 )
 
-// PrintGLPGAsJSON serializes the GLPG to a standard JSON output.
+// PrintGLPGAsJSON serializes the GLPG to a styled JSON output (always styled, jq-inspired)
 func PrintGLPGAsJSON(graph *glpg.GLPG, flags map[string]bool) error {
-	// For direct JSON serialization, we can marshal the graph structure.
-	// If a more specific JSON structure is needed, we'd transform the graph here.
-
-	// Handle different JSON modes based on flags
 	if minFlag, _ := flags["min"]; minFlag {
 		return PrintGLPGAsMinJSON(graph)
 	}
 	if lessFlag, _ := flags["less"]; lessFlag {
 		return PrintGLPGAsLessJSON(graph)
 	}
-	// Default to standard indented JSON
 	data, err := json.MarshalIndent(graph, "", "  ")
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error marshaling GLPG to JSON: %v\\n", err)
+		fmt.Fprintf(os.Stderr, "Error marshaling GLPG to JSON: %v\n", err)
 		return err
 	}
-	fmt.Println(string(data))
+	// Always style the output (jq-inspired coloring)
+	coloredOutput := string(data)
+	coloredOutput = regexp.MustCompile(`"([^"]+)":`).ReplaceAllStringFunc(coloredOutput, func(match string) string {
+		parts := regexp.MustCompile(`"([^"]+)":`).FindStringSubmatch(match)
+		if len(parts) > 1 {
+			return jqKeyStyle.Render(fmt.Sprintf(`"%s"`, parts[1])) + ":"
+		}
+		return match
+	})
+	coloredOutput = regexp.MustCompile(`: "([^"]*)"`).ReplaceAllStringFunc(coloredOutput, func(match string) string {
+		parts := regexp.MustCompile(`: "([^"]*)"`).FindStringSubmatch(match)
+		if len(parts) > 1 {
+			return ": " + jqStringStyle.Render(fmt.Sprintf(`"%s"`, parts[1]))
+		}
+		return match
+	})
+	coloredOutput = regexp.MustCompile(`: (\d+\.?\d*)`).ReplaceAllStringFunc(coloredOutput, func(match string) string {
+		parts := regexp.MustCompile(`: (\d+\.?\d*)`).FindStringSubmatch(match)
+		if len(parts) > 1 {
+			return ": " + jqNumStyle.Render(parts[1])
+		}
+		return match
+	})
+	coloredOutput = regexp.MustCompile(`: (true|false)`).ReplaceAllStringFunc(coloredOutput, func(match string) string {
+		parts := regexp.MustCompile(`: (true|false)`).FindStringSubmatch(match)
+		if len(parts) > 1 {
+			return ": " + jqBoolStyle.Render(parts[1])
+		}
+		return match
+	})
+	coloredOutput = regexp.MustCompile(`: null`).ReplaceAllStringFunc(coloredOutput, func(match string) string {
+		return ": " + jqNullStyle.Render("null")
+	})
+	fmt.Println(coloredOutput)
 	return nil
 }
 
@@ -110,76 +138,5 @@ func PrintGLPGAsLessJSON(graph *glpg.GLPG) error {
 		return err
 	}
 	fmt.Println(string(data))
-	return nil
-}
-
-// PrintGLPGAsJq is inspired by jq, providing a colored, pretty-printed JSON output.
-// This function will require more sophisticated handling to replicate jq's query capabilities,
-// but for now, it will focus on themed output of the full GLPG.
-func PrintGLPGAsJq(graph *glpg.GLPG, flags map[string]bool) error {
-	// This is a simplified version. True jq-like behavior would involve parsing and evaluating jq queries.
-	// For now, we'll just pretty print with colors.
-	data, err := json.MarshalIndent(graph, "", "  ")
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error marshaling GLPG for Jq-style output: %v\\n", err)
-		return err
-	}
-
-	// Apply basic coloring - this is a very naive approach
-	// A proper implementation would parse the JSON and apply styles to tokens.
-	coloredOutput := string(data)
-	// Example: color keys (very simplistic)
-	// A more robust solution would involve a JSON tokenizer/parser.
-	// This is just a placeholder for demonstration.
-	// For true jq-like coloring, a more sophisticated JSON traversal and styling is needed.
-	// Consider using a library that can parse JSON and allow styling of elements.
-	// For now, we'll use a simpler approach of styling the whole block or specific patterns.
-
-	// This is a placeholder for actual jq-like coloring.
-	// A real implementation would involve parsing the JSON and applying styles based on token type.
-	// For now, we just print the indented JSON.
-	// To implement coloring, one might iterate through the JSON structure or use regexes (less ideal).
-	// Let's try a regex approach for simple key coloring as a demo.
-	// This is highly simplified and not robust.
-	coloredOutput = regexp.MustCompile(`"([^"]+)":`).ReplaceAllStringFunc(coloredOutput, func(match string) string {
-		parts := regexp.MustCompile(`"([^"]+)":`).FindStringSubmatch(match)
-		if len(parts) > 1 {
-			return jqKeyStyle.Render(fmt.Sprintf(`"%s"`, parts[1])) + ":" // Style the key
-		}
-		return match
-	})
-
-	// Add more rules for strings, numbers, booleans, nulls for a more complete jq look.
-	// This is still very basic.
-	// Strings (example)
-	coloredOutput = regexp.MustCompile(`: "([^"]*)"`).ReplaceAllStringFunc(coloredOutput, func(match string) string {
-		parts := regexp.MustCompile(`: "([^"]*)"`).FindStringSubmatch(match)
-		if len(parts) > 1 {
-			return ": " + jqStringStyle.Render(fmt.Sprintf(`"%s"`, parts[1]))
-		}
-		return match
-	})
-	// Numbers (example)
-	coloredOutput = regexp.MustCompile(`: (\d+\.?\d*)`).ReplaceAllStringFunc(coloredOutput, func(match string) string {
-		parts := regexp.MustCompile(`: (\d+\.?\d*)`).FindStringSubmatch(match)
-		if len(parts) > 1 {
-			return ": " + jqNumStyle.Render(parts[1])
-		}
-		return match
-	})
-	// Booleans (example)
-	coloredOutput = regexp.MustCompile(`: (true|false)`).ReplaceAllStringFunc(coloredOutput, func(match string) string {
-		parts := regexp.MustCompile(`: (true|false)`).FindStringSubmatch(match)
-		if len(parts) > 1 {
-			return ": " + jqBoolStyle.Render(parts[1])
-		}
-		return match
-	})
-	// Null (example)
-	coloredOutput = regexp.MustCompile(`: null`).ReplaceAllStringFunc(coloredOutput, func(match string) string {
-		return ": " + jqNullStyle.Render("null")
-	})
-
-	fmt.Println(coloredOutput)
 	return nil
 }
