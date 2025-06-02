@@ -1,5 +1,7 @@
 package glpg
 
+import "lazybox/internal/ir" // Adjust the import path for ir package
+
 // GLPGProperty represents a map of key-value pairs for properties on nodes and edges.
 // It allows for mixed property types.
 type GLPGProperty map[string]interface{}
@@ -29,6 +31,9 @@ type GLPG struct {
 	// These can be populated when the graph is built or queried.
 	OutgoingEdges map[string][]*GLPGEdge // Node ID to its outgoing edges
 	IncomingEdges map[string][]*GLPGEdge // Node ID to its incoming edges
+
+	// For fs target: store the original IR tree
+	OriginalFileInfo *ir.FileInfo
 }
 
 // NewGLPG creates and initializes a new GLPG structure.

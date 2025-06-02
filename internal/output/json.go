@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"lazybox/internal/glpg"
+	"lazybox/internal/ir"
 	"lazybox/internal/theme"
 	"os"
 	"regexp"
@@ -44,99 +45,234 @@ var (
 	jqNullStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color(theme.GetDefaultTheme().Base03)).Italic(true)
 )
 
-// PrintGLPGAsJSON serializes the GLPG to a styled JSON output (always styled, jq-inspired)
+// RustStyleEntry matches the Rust JSON output for fs target
+// Only fields present in the Rust output, camelCase, omitempty
+// Recursively used for contents
+type RustStyleEntry struct {
+	Name             string            `json:"name"`
+	Path             *string           `json:"path,omitempty"`
+	AbsolutePathFull *string           `json:"absolutePathFull,omitempty"`
+	EntryTypeFull    *string           `json:"entryTypeFull,omitempty"`
+	IsSymlink        *bool             `json:"isSymlink,omitempty"`
+	SymlinkTarget    *string           `json:"symlinkTarget,omitempty"`
+	IsGitRepo        *bool             `json:"isGitRepo,omitempty"`
+	GitRemotes       map[string]string `json:"gitRemotes,omitempty"`
+	Contents         []RustStyleEntry  `json:"contents,omitempty"`
+	Error            *string           `json:"error,omitempty"`
+}
+
+// Convert from *ir.FileInfo to RustStyleEntry recursively
+func FileInfoToRustStyleEntry(fi *ir.FileInfo, compact bool, isRoot bool, rootPath string) RustStyleEntry {
+	var path *string
+	if compact {
+		if isRoot {
+			p := rootPath
+			path = &p
+		} else {
+			rel := fi.Path
+			if rel == rootPath {
+				rel = fi.Name
+			} else if rel != "" && len(rootPath) > 0 && len(fi.Path) > len(rootPath) && fi.Path[:len(rootPath)] == rootPath {
+				rel = fi.Path[len(rootPath):]
+				if len(rel) > 0 && (rel[0] == '/' || rel[0] == '\\') {
+					rel = rel[1:]
+				}
+			}
+			path = &rel
+		}
+	} else {
+		if isRoot {
+			ap := fi.AbsolutePath
+			path = &ap
+		}
+	}
+	var contents []RustStyleEntry
+	for _, child := range fi.Children {
+		contents = append(contents, FileInfoToRustStyleEntry(child, compact, false, rootPath))
+	}
+	if compact {
+		return RustStyleEntry{
+			Name:     fi.Name,
+			Path:     path,
+			Contents: contents,
+		}
+	}
+	// Normal output: all fields
+	var absolutePathFull *string
+	var entryTypeFull *string
+	var isSymlink *bool
+	var symlinkTarget *string
+	var isGitRepo *bool
+	var gitRemotes map[string]string
+	var errorStr *string
+	if isRoot {
+		ap := fi.AbsolutePath
+		absolutePathFull = &ap
+		et := string(fi.Type)
+		entryTypeFull = &et
+	}
+	if fi.IsSymlink {
+		b := true
+		isSymlink = &b
+	} else if fi.Type == ir.FileTypeSymlink {
+		b := true
+		isSymlink = &b
+	}
+	if fi.SymlinkTarget != "" {
+		st := fi.SymlinkTarget
+		symlinkTarget = &st
+	}
+	if v, ok := fi.Metadata["is_git_repo"]; ok {
+		if b, ok2 := v.(bool); ok2 {
+			isGitRepo = &b
+		}
+	}
+	if v, ok := fi.Metadata["git_remotes"]; ok {
+		if m, ok2 := v.(map[string]string); ok2 {
+			gitRemotes = m
+		}
+	}
+	if fi.Error != "" {
+		e := fi.Error
+		errorStr = &e
+	}
+	return RustStyleEntry{
+		Name:             fi.Name,
+		Path:             path,
+		AbsolutePathFull: absolutePathFull,
+		EntryTypeFull:    entryTypeFull,
+		IsSymlink:        isSymlink,
+		SymlinkTarget:    symlinkTarget,
+		IsGitRepo:        isGitRepo,
+		GitRemotes:       gitRemotes,
+		Contents:         contents,
+		Error:            errorStr,
+	}
+}
+
+// PrintJSONWithHighlight prints JSON with syntax highlighting using lipgloss
+func PrintJSONWithHighlight(data []byte, minified bool) {
+	var out any
+	if err := json.Unmarshal(data, &out); err != nil {
+		fmt.Println(string(data))
+		return
+	}
+	printJSONValueWithHighlight(out, 0, minified)
+}
+
+func printJSONValueWithHighlight(v any, indent int, minified bool) {
+	pad := func(n int) string {
+		if minified {
+			return ""
+		}
+		return string(make([]byte, n*2))
+	}
+	switch val := v.(type) {
+	case map[string]any:
+		if minified {
+			fmt.Print(jqKeyStyle.Render("{"))
+		} else {
+			fmt.Print(jqKeyStyle.Render("{\n"))
+		}
+		first := true
+		for k, v2 := range val {
+			if !first {
+				if minified {
+					fmt.Print(jqKeyStyle.Render(","))
+				} else {
+					fmt.Print(jqKeyStyle.Render(",\n"))
+				}
+			}
+			first = false
+			fmt.Print(pad(indent + 1))
+			fmt.Print(jqKeyStyle.Render("\"" + k + "\""))
+			fmt.Print(jqKeyStyle.Render(": "))
+			printJSONValueWithHighlight(v2, indent+1, minified)
+		}
+		if minified {
+			fmt.Print(jqKeyStyle.Render("}"))
+		} else {
+			fmt.Print("\n" + pad(indent) + jqKeyStyle.Render("}"))
+		}
+	case []any:
+		fmt.Print(jqKeyStyle.Render("["))
+		for i, v2 := range val {
+			if i > 0 {
+				if minified {
+					fmt.Print(jqKeyStyle.Render(","))
+				} else {
+					fmt.Print(jqKeyStyle.Render(", "))
+				}
+			}
+			printJSONValueWithHighlight(v2, indent+1, minified)
+		}
+		fmt.Print(jqKeyStyle.Render("]"))
+	case string:
+		fmt.Print(jqStringStyle.Render("\"" + val + "\""))
+	case float64:
+		fmt.Print(jqNumStyle.Render(fmt.Sprintf("%v", val)))
+	case bool:
+		fmt.Print(jqBoolStyle.Render(fmt.Sprintf("%v", val)))
+	case nil:
+		fmt.Print(jqNullStyle.Render("null"))
+	default:
+		fmt.Print(jqStringStyle.Render(fmt.Sprintf("%v", val)))
+	}
+}
+
+// PrintGLPGAsJSON serializes the GLPG to a Rust-style recursive tree for fs target, with pretty/minified and normal/compact modes
 func PrintGLPGAsJSON(graph *glpg.GLPG, flags map[string]bool) error {
-	if minFlag, _ := flags["min"]; minFlag {
-		return PrintGLPGAsMinJSON(graph)
+	compact := flags["less"] || flags["compact"]
+	minified := flags["min"]
+
+	if graph.OriginalFileInfo != nil {
+		rootPath := graph.OriginalFileInfo.AbsolutePath
+		entry := FileInfoToRustStyleEntry(graph.OriginalFileInfo, compact, true, rootPath)
+		var data []byte
+		var err error
+		if minified {
+			data, err = json.Marshal(entry)
+		} else {
+			data, err = json.MarshalIndent(entry, "", "  ")
+		}
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error marshaling RustStyleEntry: %v\n", err)
+			return err
+		}
+		if minified {
+			PrintJSONWithHighlight(data, true)
+		} else {
+			PrintJSONWithHighlight(data, false)
+			fmt.Println()
+		}
+		return nil
 	}
-	if lessFlag, _ := flags["less"]; lessFlag {
-		return PrintGLPGAsLessJSON(graph)
+
+	// fallback: original GLPG graph output for non-fs targets
+	var data []byte
+	var err error
+	if minified {
+		data, err = json.Marshal(graph)
+	} else {
+		data, err = json.MarshalIndent(graph, "", "  ")
 	}
-	data, err := json.MarshalIndent(graph, "", "  ")
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error marshaling GLPG to JSON: %v\n", err)
 		return err
 	}
-	// Always style the output (jq-inspired coloring)
-	coloredOutput := string(data)
-	coloredOutput = regexp.MustCompile(`"([^"]+)":`).ReplaceAllStringFunc(coloredOutput, func(match string) string {
-		parts := regexp.MustCompile(`"([^"]+)":`).FindStringSubmatch(match)
-		if len(parts) > 1 {
-			return jqKeyStyle.Render(fmt.Sprintf(`"%s"`, parts[1])) + ":"
-		}
-		return match
-	})
-	coloredOutput = regexp.MustCompile(`: "([^"]*)"`).ReplaceAllStringFunc(coloredOutput, func(match string) string {
-		parts := regexp.MustCompile(`: "([^"]*)"`).FindStringSubmatch(match)
-		if len(parts) > 1 {
-			return ": " + jqStringStyle.Render(fmt.Sprintf(`"%s"`, parts[1]))
-		}
-		return match
-	})
-	coloredOutput = regexp.MustCompile(`: (\d+\.?\d*)`).ReplaceAllStringFunc(coloredOutput, func(match string) string {
-		parts := regexp.MustCompile(`: (\d+\.?\d*)`).FindStringSubmatch(match)
-		if len(parts) > 1 {
-			return ": " + jqNumStyle.Render(parts[1])
-		}
-		return match
-	})
-	coloredOutput = regexp.MustCompile(`: (true|false)`).ReplaceAllStringFunc(coloredOutput, func(match string) string {
-		parts := regexp.MustCompile(`: (true|false)`).FindStringSubmatch(match)
-		if len(parts) > 1 {
-			return ": " + jqBoolStyle.Render(parts[1])
-		}
-		return match
-	})
-	coloredOutput = regexp.MustCompile(`: null`).ReplaceAllStringFunc(coloredOutput, func(match string) string {
-		return ": " + jqNullStyle.Render("null")
-	})
-	fmt.Println(coloredOutput)
+	PrintJSONWithHighlight(data, minified)
+	if !minified {
+		fmt.Println()
+	}
 	return nil
 }
 
-// PrintGLPGAsMinJSON serializes the GLPG to a minified JSON output.
+// PrintGLPGAsMinJSON is now an alias for PrintGLPGAsJSON with minified flag
 func PrintGLPGAsMinJSON(graph *glpg.GLPG) error {
-	data, err := json.Marshal(graph)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error marshaling GLPG to minified JSON: %v\\n", err)
-		return err
-	}
-	fmt.Println(string(data))
-	return nil
+	return PrintGLPGAsJSON(graph, map[string]bool{"min": true})
 }
 
-// PrintGLPGAsLessJSON provides a summarized JSON view of the GLPG.
-// This might involve showing counts of nodes/edges or specific high-level properties.
+// PrintGLPGAsLessJSON is now an alias for PrintGLPGAsJSON with compact flag
 func PrintGLPGAsLessJSON(graph *glpg.GLPG) error {
-	if graph == nil {
-		fmt.Println("{}")
-		return nil
-	}
-	summary := struct {
-		NodeCount int      `json:"node_count"`
-		EdgeCount int      `json:"edge_count"`
-		NodeIDs   []string `json:"node_ids,omitempty"` // Example: show some node IDs
-		// Potentially add more summary fields here, like label counts, etc.
-	}{
-		NodeCount: len(graph.Nodes),
-		EdgeCount: len(graph.Edges),
-	}
-
-	// Optionally, add a few node IDs to the summary
-	maxPreviewIDs := 5
-	for id := range graph.Nodes {
-		if len(summary.NodeIDs) < maxPreviewIDs {
-			summary.NodeIDs = append(summary.NodeIDs, id)
-		} else {
-			break
-		}
-	}
-
-	data, err := json.MarshalIndent(summary, "", "  ")
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error marshaling GLPG summary to JSON: %v\\n", err)
-		return err
-	}
-	fmt.Println(string(data))
-	return nil
+	return PrintGLPGAsJSON(graph, map[string]bool{"less": true})
 }

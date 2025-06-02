@@ -43,12 +43,17 @@ var modeAliases = map[string]string{
 var commentifyLang string // Language for commentify mode
 
 func main() {
-	theme.Initialize() // Initialize the theme system
-	printBanner()
+	// Only print banner if no arguments or help flag is present
+	if len(os.Args) == 1 || hasHelpFlag(os.Args) {
+		printBanner()
+	}
+	// theme.Initialize() // Initialize the theme system
+	// printBanner() // Moved above, only print in help/no-args
 
 	var flagAll bool
 	var flagVerbose bool
 	var flagLess bool
+	var flagCompact bool
 	var flagMin bool
 	var flagIncremental bool
 	var flagIR bool
@@ -65,6 +70,7 @@ func main() {
 	rootCmd.PersistentFlags().BoolVarP(&flagAll, "all", "a", false, "Print all representations of the data, including all available metadata and results")
 	rootCmd.PersistentFlags().BoolVarP(&flagVerbose, "verbose", "v", false, "Verbose output. Includes additional metadata and results.")
 	rootCmd.PersistentFlags().BoolVarP(&flagLess, "less", "l", false, "Compact, minimal output, with selective exclusions of metadata or results.")
+	rootCmd.PersistentFlags().BoolVarP(&flagCompact, "compact", "c", false, "Alias for --less: compact, minimal output.")
 	rootCmd.PersistentFlags().BoolVarP(&flagMin, "min", "m", false, "Remove all whitespace and convert to a single string value.")
 	rootCmd.PersistentFlags().BoolVarP(&flagIncremental, "incremental", "i", false, "Print the output incrementally as it is processed.")
 	rootCmd.PersistentFlags().BoolVarP(&flagIR, "ir", "I", false, "Print the intermediate representation of the data.")
@@ -385,14 +391,24 @@ func main() {
 // collectFlags gathers all persistent flags into a map.
 func collectFlags(cmd *cobra.Command) map[string]bool {
 	flags := make(map[string]bool)
-	flags["all"], _ = cmd.Flags().GetBool("all")
-	flags["verbose"], _ = cmd.Flags().GetBool("verbose")
-	flags["less"], _ = cmd.Flags().GetBool("less")
-	flags["min"], _ = cmd.Flags().GetBool("min")
-	flags["incremental"], _ = cmd.Flags().GetBool("incremental")
-	flags["ir"], _ = cmd.Flags().GetBool("ir")
-	flags["silent"], _ = cmd.Flags().GetBool("silent")
-	flags["tokenize"], _ = cmd.Flags().GetBool("tokenize")
+	if cmd.Flags().Changed("less") {
+		flags["less"] = true
+	}
+	if cmd.Flags().Changed("compact") {
+		flags["compact"] = true
+	}
+	if cmd.Flags().Changed("min") {
+		flags["min"] = true
+	}
+	if cmd.Flags().Changed("silent") {
+		flags["silent"] = true
+	}
+	if cmd.Flags().Changed("verbose") {
+		flags["verbose"] = true
+	}
+	if cmd.Flags().Changed("all") {
+		flags["all"] = true
+	}
 	return flags
 }
 
@@ -471,5 +487,25 @@ func styledErrorWithModes(badMode string) {
 
 // Add a CLI banner at startup for supreme vibes
 func printBanner() {
-	output.PrintBannerText("lazybox")
+	ct := theme.GetDefaultTheme()
+	bannerStyle := lipgloss.NewStyle().Foreground(lipgloss.Color(ct.Base0B)).Bold(true)
+	taglineStyle := lipgloss.NewStyle().Foreground(lipgloss.Color(ct.Base0A)).Bold(false)
+	ascii := `  _                         _
+ | |   __ _   ____  _   _  | |__     ___   __  __
+ | |  / _' | |_  / | | | | | '_ \   / _ \  \ \/ /
+ | | | (_| |  / /  | |_| | | |_) | | (_) |  >  <
+ | |  \__,_| /___|  \__, | |_.__/   \___/  /_/\\_\\
+                    |___/`
+	fmt.Println(bannerStyle.Render(ascii))
+	fmt.Println(taglineStyle.Render("  Your polymorphic structured data swiss army knife..."))
+}
+
+// Detect if help flag is present in args
+func hasHelpFlag(args []string) bool {
+	for _, arg := range args {
+		if arg == "-h" || arg == "--help" || arg == "help" {
+			return true
+		}
+	}
+	return false
 }

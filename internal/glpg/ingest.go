@@ -16,6 +16,10 @@ import (
 // This function acts as a dispatcher based on the type of the input IR.
 func ToGLPG(data interface{}) (*GLPG, error) {
 	g := NewGLPG()
+	// If the input is *ir.FileInfo, store it for fs output
+	if fi, ok := data.(*ir.FileInfo); ok {
+		g.OriginalFileInfo = fi
+	}
 	err := ingestToGLPG(data, g, "", "") // No parent node or edge label for the root
 	if err != nil {
 		return nil, err

@@ -8,7 +8,6 @@ require (
 	github.com/charmbracelet/lipgloss v1.1.1-0.20250404203927-76690c660834
 	github.com/common-nighthawk/go-figure v0.0.0-20210622060536-734e95fb86be
 	github.com/google/uuid v1.6.0
-	github.com/lukesampson/figlet v0.0.0-20190211215653-8a3ef4a6ac42
 	github.com/spf13/cobra v1.9.1
 	gopkg.in/yaml.v3 v3.0.1
 )
